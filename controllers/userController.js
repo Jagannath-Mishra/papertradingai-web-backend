@@ -62,6 +62,7 @@ const loginUser = async (req, res) => {
       return res.status(400).json({ error: "Invalid email or password" });
     }
 
+    
     const validPassword = await bcrypt.compare(password, user.rows[0].password);
     if (!validPassword) {
       return res.status(400).json({ error: "Invalid email or password" });
@@ -71,10 +72,20 @@ const loginUser = async (req, res) => {
     const token = jwt.sign(
       { id: user.rows[0].id, email: user.rows[0].email },
       process.env.JWT_SECRET_KEY,  // Your secret key
-      { expiresIn: '1h' }
+      {
+        expiresIn: process.env.JWT_EXPIRATION,
+      }
     );
 
-    res.json({ message: "Login successful", token });
+    res.status(200).json({
+      message: "Login successful",
+      token,
+      user: {
+        firstName: user.rows[0].first_name,
+        lastName: user.rows[0].last_name,
+        email: user.rows[0].email,
+      },
+    });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ error: "Server error" });
