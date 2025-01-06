@@ -38,71 +38,49 @@ router.post('/', authenticateToken, async (req, res) => {
     const stockId = stockResult.rows[0].id;
 
     if (orderType === "SELL") {
-      // Ensure the user has enough quantity of the stock to sell
-      const stockOwnershipQuery = `
-        SELECT SUM(qty) AS total_qty
-        FROM orders
-        WHERE user_id = $1 AND stock_id = $2 AND order_type = 'BUY'
+      // Check portfolio for available quantity
+      const portfolioQuery = `
+        SELECT quantity FROM portfolio WHERE user_id = $1 AND stock_id = $2;
       `;
-      const stockOwnershipResult = await pool.query(stockOwnershipQuery, [req.user.id, stockId]);
-    
-      const totalOwnedQty = stockOwnershipResult.rows[0]?.total_qty || 0;
-    
-      // Fetch the total sold quantity
-      const stockSoldQuery = `
-        SELECT SUM(qty) AS total_sold_qty
-        FROM orders
-        WHERE user_id = $1 AND stock_id = $2 AND order_type = 'SELL'
-      `;
-      const stockSoldResult = await pool.query(stockSoldQuery, [req.user.id, stockId]);
-    
-      const totalSoldQty = stockSoldResult.rows[0]?.total_sold_qty || 0;
-    
-      // Calculate available quantity
-      const availableQty = totalOwnedQty - totalSoldQty;
-    
-      if (availableQty < qty) {
+      const portfolioResult = await pool.query(portfolioQuery, [req.user.id, stockId]);
+
+      if (portfolioResult.rows.length === 0 || portfolioResult.rows[0].quantity < qty) {
         return res.status(400).json({ error: 'Insufficient stock quantity to sell' });
       }
-    
-      // Add the amount to trading_balance and available_cash
+
+      const newQuantity = portfolioResult.rows[0].quantity - qty;
+
+      if (newQuantity === 0) {
+        // Remove the stock from the portfolio if quantity is zero
+        const deletePortfolioQuery = `
+          DELETE FROM portfolio WHERE user_id = $1 AND stock_id = $2;
+        `;
+        await pool.query(deletePortfolioQuery, [req.user.id, stockId]);
+      } else {
+        // Update portfolio quantity
+        const updatePortfolioQuery = `
+          UPDATE portfolio SET quantity = $1 WHERE user_id = $2 AND stock_id = $3;
+        `;
+        await pool.query(updatePortfolioQuery, [newQuantity, req.user.id, stockId]);
+      }
+
+      // Update balances
       const updatedTradingBalance = userBalance.trading_balance + totalAmount;
       const updatedAvailableCash = userBalance.available_cash + totalAmount;
-    
+
       const updateBalanceQuery = `
         UPDATE virtual_balance
         SET trading_balance = $1, available_cash = $2
         WHERE user_id = $3
         RETURNING *;
       `;
-      const updatedBalance = await pool.query(updateBalanceQuery, [
+      await pool.query(updateBalanceQuery, [
         updatedTradingBalance,
         updatedAvailableCash,
         req.user.id,
       ]);
-    
-      // Insert the sell order
-      const insertOrderQuery = `
-        INSERT INTO orders (user_id, stock_id, qty, price, order_type, state, description)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING *;
-      `;
-      const orderResult = await pool.query(insertOrderQuery, [
-        req.user.id,
-        stockId,
-        qty,
-        price,
-        orderType,
-        "EXECUTED",
-        "Stock sold",
-      ]);
-    
-      return res.status(201).json({
-        message: 'Sell order placed successfully',
-        order: orderResult.rows[0],
-      });
-    }
-    else if (orderType === "BUY") {
+
+    } else if (orderType === "BUY") {
       // Check if the user has sufficient available cash
       if (userBalance.available_cash < totalAmount) {
         return res.status(400).json({ error: 'Insufficient funds' });
@@ -119,12 +97,21 @@ router.post('/', authenticateToken, async (req, res) => {
         WHERE user_id = $4
         RETURNING *;
       `;
-      const updatedBalance = await pool.query(updateBalanceQuery, [
+      await pool.query(updateBalanceQuery, [
         updatedTradingBalance,
         updatedAvailableCash,
         amountUtilized,
         req.user.id,
       ]);
+
+      // Update portfolio
+      const upsertPortfolioQuery = `
+        INSERT INTO portfolio (user_id, stock_id, quantity)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id, stock_id)
+        DO UPDATE SET quantity = portfolio.quantity + EXCLUDED.quantity;
+      `;
+      await pool.query(upsertPortfolioQuery, [req.user.id, stockId, qty]);
     } else {
       return res.status(400).json({ error: 'Invalid order type' });
     }
