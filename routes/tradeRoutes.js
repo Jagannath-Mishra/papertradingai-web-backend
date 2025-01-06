@@ -3,6 +3,105 @@ const pool = require('../models/db');
 const { authenticateToken } = require('../utils/jwt');
 
 const router = express.Router();
+/**
+ * @swagger
+ * /trades/:
+ *   post:
+ *     summary: Place a stock order (Buy or Sell)
+ *     description: Handles stock trades by interacting with the user's portfolio and virtual balance.
+ *     security:
+ *       - bearerAuth: []
+ *     tags:
+ *       - Trades
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - symbol
+ *               - companyName
+ *               - qty
+ *               - price
+ *               - orderType
+ *             properties:
+ *               symbol:
+ *                 type: string
+ *                 example: AAPL
+ *                 description: The stock symbol (ticker).
+ *               companyName:
+ *                 type: string
+ *                 example: Apple Inc.
+ *                 description: The name of the company.
+ *               qty:
+ *                 type: integer
+ *                 example: 10
+ *                 description: The quantity of stocks.
+ *               price:
+ *                 type: number
+ *                 example: 150.25
+ *                 description: The price per stock.
+ *               orderType:
+ *                 type: string
+ *                 enum: [BUY, SELL]
+ *                 example: BUY
+ *                 description: The type of order (BUY or SELL).
+ *     responses:
+ *       201:
+ *         description: Order placed successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Order buyed successfully
+ *                 order:
+ *                   type: object
+ *                   properties:
+ *                     symbol:
+ *                       type: string
+ *                     companyName:
+ *                       type: string
+ *                     qty:
+ *                       type: integer
+ *                     price:
+ *                       type: number
+ *                     orderType:
+ *                       type: string
+ *       400:
+ *         description: Bad request. Validation error or insufficient funds/stocks.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: Insufficient funds
+ *       404:
+ *         description: Virtual balance or stock not found.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: User virtual balance not found
+ *       500:
+ *         description: Internal server error.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   example: Failed to process order
+ */
 
 router.post('/', authenticateToken, async (req, res) => {
   const { symbol, companyName, qty, price, orderType } = req.body;
@@ -52,7 +151,7 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Handle sell orders
+// Handle sell trades
 async function handleSellOrder(req, res, pool, stockId, qty, totalAmount, userBalance) {
   // Check portfolio for available quantity
   const portfolioQuery = `SELECT quantity FROM portfolio WHERE user_id = $1 AND stock_id = $2`;
@@ -85,7 +184,7 @@ async function handleSellOrder(req, res, pool, stockId, qty, totalAmount, userBa
   await pool.query(updateBalanceQuery, [updatedTradingBalance, updatedAvailableCash, req.user.id]);
 }
 
-// Handle buy orders
+// Handle buy trades
 async function handleBuyOrder(req, res, pool, stockId, qty, totalAmount, userBalance) {
   // Check if the user has sufficient available cash
   if (userBalance.available_cash < totalAmount) {

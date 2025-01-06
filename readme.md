@@ -1,5 +1,3 @@
-1- Add otp validation for email field during registration.
-2- integrating the concept of a refresh token involves securely handling token expiration
 you can access the Swagger UI at:
 http://localhost:5000/api-docs
 
