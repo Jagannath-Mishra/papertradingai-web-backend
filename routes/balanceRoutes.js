@@ -4,18 +4,48 @@ const { authenticateToken } = require('../utils/jwt');
 
 const router = express.Router();
 
-// Get all balances
+// Utility to handle database errors gracefully
+const handleDatabaseError = (res, error, action) => {
+  console.error(`Error ${action}:`, error.message);
+  res.status(500).json({ error: `Failed to ${action}` });
+};
+
+// Utility function for pagination
+const paginate = async (query, params, page, limit) => {
+  const offset = (page - 1) * limit;
+
+  // Get total record count
+  const totalRecordsResult = await pool.query(`SELECT COUNT(*) AS total FROM (${query}) AS subquery`, params);
+  const totalRecords = parseInt(totalRecordsResult.rows[0].total, 10);
+
+  // Get paginated results
+  const paginatedQuery = `${query} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+  const paginatedResult = await pool.query(paginatedQuery, [...params, limit, offset]);
+
+  return {
+    totalRecords,
+    totalPages: Math.ceil(totalRecords / limit),
+    data: paginatedResult.rows,
+  };
+};
+
+// Get all balances with optional pagination
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const balances = await pool.query('SELECT * FROM virtual_balance');
-    res.json(balances.rows);
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+
+    const result = await paginate('SELECT * FROM virtual_balance ORDER BY created_at DESC', [], page, limit);
+
+    res.json({
+      page,
+      limit,
+      ...result,
+    });
   } catch (err) {
-    console.error('Error fetching balances:', err.message);
-    res.status(500).json({ error: 'Failed to fetch balances' });
+    handleDatabaseError(res, err, 'fetch balances');
   }
 });
-
-
 
 // Get balance by user_id
 router.get('/:user_id', authenticateToken, async (req, res) => {
@@ -27,8 +57,7 @@ router.get('/:user_id', authenticateToken, async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('Error fetching balance:', err.message);
-    res.status(500).json({ error: 'Failed to fetch balance' });
+    handleDatabaseError(res, err, 'fetch balance');
   }
 });
 
@@ -66,8 +95,7 @@ router.post('/', authenticateToken, async (req, res) => {
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error('Error creating balance:', err.message);
-    res.status(500).json({ error: 'Failed to create balance' });
+    handleDatabaseError(res, err, 'create balance');
   }
 });
 
@@ -90,8 +118,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('Error updating balance:', err.message);
-    res.status(500).json({ error: 'Failed to update balance' });
+    handleDatabaseError(res, err, 'update balance');
   }
 });
 
@@ -106,8 +133,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     }
     res.status(204).send();
   } catch (err) {
-    console.error('Error deleting balance:', err.message);
-    res.status(500).json({ error: 'Failed to delete balance' });
+    handleDatabaseError(res, err, 'delete balance');
   }
 });
 

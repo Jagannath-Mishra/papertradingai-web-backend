@@ -4,141 +4,143 @@ const { authenticateToken } = require('../utils/jwt');
 
 const router = express.Router();
 
-router.post('/', authenticateToken, async (req, res) => {
-  const { symbol, companyName, qty, price, orderType } = req.body;
+// Get all orders with optional pagination
+router.get('/', authenticateToken, async (req, res) => {
+  const { page = 1, limit = 10 } = req.query; // Default to page 1, 10 items per page
+  const offset = (page - 1) * limit;
 
-  if (!symbol || !companyName || !qty || !price || !orderType) {
-    return res.status(400).json({ error: 'All fields are required' });
+  try {
+    const ordersQuery = `
+      SELECT * 
+      FROM orders 
+      ORDER BY created_at DESC 
+      LIMIT $1 OFFSET $2;
+    `;
+    const orders = await pool.query(ordersQuery, [limit, offset]);
+
+    res.json({ orders: orders.rows, page: Number(page), limit: Number(limit) });
+  } catch (err) {
+    console.error('Error fetching orders:', err.message);
+    res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
+
+// Get a single order by ID
+router.get('/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const orderQuery = `SELECT * FROM orders WHERE id = $1`;
+    const orderResult = await pool.query(orderQuery, [id]);
+
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    res.json(orderResult.rows[0]);
+  } catch (err) {
+    console.error('Error fetching order:', err.message);
+    res.status(500).json({ error: 'Failed to fetch order' });
+  }
+});
+
+// Create a new order
+router.post('/', authenticateToken, async (req, res) => {
+  const { user_id, stock_id, qty, price, order_type, description } = req.body;
+
+  if (!user_id || !stock_id || !qty || !price || !order_type) {
+    return res.status(400).json({ error: 'All required fields must be provided' });
   }
 
   try {
-    const totalAmount = qty * price; // Calculate total value of the transaction
-
-    // Fetch the user's virtual balance
-    const balanceQuery = `SELECT * FROM virtual_balance WHERE user_id = $1`;
-    const balanceResult = await pool.query(balanceQuery, [req.user.id]);
-
-    if (balanceResult.rows.length === 0) {
-      return res.status(404).json({ error: 'User virtual balance not found' });
-    }
-
-    const userBalance = balanceResult.rows[0];
-
-    // Upsert stock information
-    const upsertStockQuery = `
-      INSERT INTO stocks (symbol, name, current_price)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (symbol)
-      DO UPDATE SET
-        name = EXCLUDED.name,
-        current_price = EXCLUDED.current_price
-      RETURNING id;
-    `;
-    const stockResult = await pool.query(upsertStockQuery, [symbol, companyName, price]);
-    const stockId = stockResult.rows[0].id;
-
-    if (orderType === "SELL") {
-      // Check portfolio for available quantity
-      const portfolioQuery = `
-        SELECT quantity FROM portfolio WHERE user_id = $1 AND stock_id = $2;
-      `;
-      const portfolioResult = await pool.query(portfolioQuery, [req.user.id, stockId]);
-
-      if (portfolioResult.rows.length === 0 || portfolioResult.rows[0].quantity < qty) {
-        return res.status(400).json({ error: 'Insufficient stock quantity to sell' });
-      }
-
-      const newQuantity = portfolioResult.rows[0].quantity - qty;
-
-      if (newQuantity === 0) {
-        // Remove the stock from the portfolio if quantity is zero
-        const deletePortfolioQuery = `
-          DELETE FROM portfolio WHERE user_id = $1 AND stock_id = $2;
-        `;
-        await pool.query(deletePortfolioQuery, [req.user.id, stockId]);
-      } else {
-        // Update portfolio quantity
-        const updatePortfolioQuery = `
-          UPDATE portfolio SET quantity = $1 WHERE user_id = $2 AND stock_id = $3;
-        `;
-        await pool.query(updatePortfolioQuery, [newQuantity, req.user.id, stockId]);
-      }
-
-      // Update balances
-      const updatedTradingBalance = userBalance.trading_balance + totalAmount;
-      const updatedAvailableCash = userBalance.available_cash + totalAmount;
-
-      const updateBalanceQuery = `
-        UPDATE virtual_balance
-        SET trading_balance = $1, available_cash = $2
-        WHERE user_id = $3
-        RETURNING *;
-      `;
-      await pool.query(updateBalanceQuery, [
-        updatedTradingBalance,
-        updatedAvailableCash,
-        req.user.id,
-      ]);
-
-    } else if (orderType === "BUY") {
-      // Check if the user has sufficient available cash
-      if (userBalance.available_cash < totalAmount) {
-        return res.status(400).json({ error: 'Insufficient funds' });
-      }
-
-      // Deduct the amount from trading_balance and update available_cash
-      const updatedTradingBalance = userBalance.trading_balance - totalAmount;
-      const updatedAvailableCash = userBalance.available_cash - totalAmount;
-      const amountUtilized = userBalance.opening_cash_balance - updatedAvailableCash;
-
-      const updateBalanceQuery = `
-        UPDATE virtual_balance
-        SET trading_balance = $1, available_cash = $2, amount_utilized = $3
-        WHERE user_id = $4
-        RETURNING *;
-      `;
-      await pool.query(updateBalanceQuery, [
-        updatedTradingBalance,
-        updatedAvailableCash,
-        amountUtilized,
-        req.user.id,
-      ]);
-
-      // Update portfolio
-      const upsertPortfolioQuery = `
-        INSERT INTO portfolio (user_id, stock_id, quantity)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, stock_id)
-        DO UPDATE SET quantity = portfolio.quantity + EXCLUDED.quantity;
-      `;
-      await pool.query(upsertPortfolioQuery, [req.user.id, stockId, qty]);
-    } else {
-      return res.status(400).json({ error: 'Invalid order type' });
-    }
-
-    // Insert the order
     const insertOrderQuery = `
-      INSERT INTO orders (user_id, stock_id, qty, price, order_type, state, description)
+      INSERT INTO orders (user_id, stock_id, qty, price, order_type, description, state)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *;
     `;
     const orderResult = await pool.query(insertOrderQuery, [
-      req.user.id,
-      stockId,
+      user_id,
+      stock_id,
       qty,
       price,
-      orderType,
-      "EXECUTED",
-      orderType === "SELL" ? "Stock sold" : "Stock purchased",
+      order_type,
+      description || null,
+      'pending',
     ]);
 
-    res.status(201).json({
-      message: `Order ${orderType.toLowerCase()}ed successfully`,
-      order: orderResult.rows[0],
-    });
+    res.status(201).json({ message: 'Order created successfully', order: orderResult.rows[0] });
   } catch (err) {
-    console.error('Error processing order:', err.message);
-    res.status(500).json({ error: 'Failed to process order' });
+    console.error('Error creating order:', err.message);
+    res.status(500).json({ error: 'Failed to create order' });
+  }
+});
+
+// Update an existing order
+router.put('/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { qty, price, state, description } = req.body;
+
+  if (!qty && !price && !state && !description) {
+    return res.status(400).json({ error: 'At least one field must be provided to update' });
+  }
+
+  try {
+    const updateFields = [];
+    const values = [];
+    let query = 'UPDATE orders SET ';
+
+    if (qty) {
+      updateFields.push(`qty = $${values.length + 1}`);
+      values.push(qty);
+    }
+
+    if (price) {
+      updateFields.push(`price = $${values.length + 1}`);
+      values.push(price);
+    }
+
+    if (state) {
+      updateFields.push(`state = $${values.length + 1}`);
+      values.push(state);
+    }
+
+    if (description) {
+      updateFields.push(`description = $${values.length + 1}`);
+      values.push(description);
+    }
+
+    query += updateFields.join(', ') + ` WHERE id = $${values.length + 1} RETURNING *;`;
+    values.push(id);
+
+    const updatedOrder = await pool.query(query, values);
+
+    if (updatedOrder.rows.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    res.json({ message: 'Order updated successfully', order: updatedOrder.rows[0] });
+  } catch (err) {
+    console.error('Error updating order:', err.message);
+    res.status(500).json({ error: 'Failed to update order' });
+  }
+});
+
+// Delete an order by ID
+router.delete('/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const deleteOrderQuery = `DELETE FROM orders WHERE id = $1 RETURNING *;`;
+    const deletedOrder = await pool.query(deleteOrderQuery, [id]);
+
+    if (deletedOrder.rows.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    res.json({ message: 'Order deleted successfully', order: deletedOrder.rows[0] });
+  } catch (err) {
+    console.error('Error deleting order:', err.message);
+    res.status(500).json({ error: 'Failed to delete order' });
   }
 });
 
