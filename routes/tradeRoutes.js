@@ -3,7 +3,6 @@ const { pool } = require("../models/db"); // PostgreSQL connection pool
 const { authenticateToken } = require("../utils/jwt");
 const router = express.Router();
 
-// Buy Stock
 router.post("/buy", authenticateToken, async (req, res) => {
     const { stock_id, quantity } = req.body;
   
@@ -126,7 +125,37 @@ router.post("/sell", authenticateToken, async (req, res) => {
     }
   });
   
-
+/**
+ * @swagger
+ * /portfolio:
+ *   get:
+ *     summary: Get user portfolio
+ *     description: Retrieves the portfolio of the authenticated user.
+ *     tags: [Portfolio]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: The user's portfolio.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   symbol:
+ *                     type: string
+ *                     example: "AAPL"
+ *                   name:
+ *                     type: string
+ *                     example: "Apple Inc."
+ *                   quantity:
+ *                     type: integer
+ *                     example: 10
+ *       500:
+ *         description: Internal server error.
+ */
 // Fetch Portfolio
 router.get("/portfolio", authenticateToken, async (req, res) => {
   try {
@@ -144,8 +173,45 @@ router.get("/portfolio", authenticateToken, async (req, res) => {
     res.status(500).json({ message: "Internal Server Error" });
   }
 });
-
-router.get("/balance", authenticateToken, async (req, res) => {
+/**
+ * @swagger
+ * /balance:
+ *   get:
+ *     summary: Get virtual balance
+ *     description: Retrieves the virtual balance transaction history of the authenticated user.
+ *     tags: [Balance]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Virtual balance history.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                     example: "transaction-uuid-example"
+ *                   type:
+ *                     type: string
+ *                     example: "deposit"
+ *                   amount:
+ *                     type: number
+ *                     example: 1000.00
+ *                   description:
+ *                     type: string
+ *                     example: "Initial deposit"
+ *                   created_at:
+ *                     type: string
+ *                     format: date-time
+ *                     example: "2024-12-30T12:00:00Z"
+ *       500:
+ *         description: Internal server error.
+ */
+router.get("/api/balance", authenticateToken, async (req, res) => {
     try {
       const result = await pool.query(
         "SELECT * FROM virtual_balance WHERE user_id = $1 ORDER BY created_at DESC",
